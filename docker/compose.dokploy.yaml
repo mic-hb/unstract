@@ -81,6 +81,15 @@ services:
     depends_on:
       unstract-setup:
         condition: service_completed_successfully
+    environment:
+      # Override backend/.env's WEB_APP_ORIGIN_URL (which is hardcoded to
+      # "http://frontend.unstract.localhost" in sample.env) with the real
+      # public origin. The backend uses this for CORS_ALLOWED_ORIGINS,
+      # CSRF_TRUSTED_ORIGINS, and post-login redirects - so it MUST
+      # match what the browser sends. Compose's `environment:` takes
+      # precedence over `env_file:`, so this wins without editing the
+      # generated .env file.
+      - WEB_APP_ORIGIN_URL=${WEB_APP_ORIGIN_URL:-https://unstract.ngelantour.cloud}
     ports: !override []
     labels:
       - traefik.enable=false
