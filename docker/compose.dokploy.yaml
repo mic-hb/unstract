@@ -86,6 +86,9 @@ services:
     ports: !override
       - "${UNSTRACT_PUBLIC_PORT:-8888}:80"
       - "8081:8080"
+    networks: !override
+      - default
+      - dokploy-network
 
   # ----------------------------------------------------------------------
   # Replace *.unstract.localhost host rules with the real hostname.
@@ -203,3 +206,14 @@ services:
     ports: !override []
   feature-flag:
     ports: !override []
+
+# ----------------------------------------------------------------------
+# Add `dokploy-network` as an externally-defined network. The bundled
+# Traefik's `networks:` entry above references it. If your Dokploy
+# instance uses a different network name (e.g. a per-project bridge),
+# replace the value of `name:` below.
+# ----------------------------------------------------------------------
+networks:
+  dokploy-network:
+    external: true
+    name: dokploy-network
