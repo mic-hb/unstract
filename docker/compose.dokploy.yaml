@@ -3,6 +3,18 @@
 # Layered on top of docker-compose.yaml + docker-compose-dev-essentials.yaml
 # (the latter is pulled in by the former via the `include:` directive).
 #
+# The `include:` directive below re-declares docker-compose-dev-essentials.yaml.
+# This is required because Dokploy's domain-to-service validator does NOT
+# follow `include:` in the main compose file - it only reads the file paths
+# in "Compose File" / "Extra Compose Files" verbatim. Without this re-include,
+# the dev-essentials services (reverse-proxy, db, redis, rabbitmq, minio,
+# qdrant, feature-flag) are invisible to the validator and any domain mapped
+# to e.g. `reverse-proxy` fails with "service does not exist in the compose".
+# Re-including the same file is idempotent for compose merge.
+#
+include:
+  - docker-compose-dev-essentials.yaml
+
 # What this file adds vs. upstream:
 #   1. An `unstract-setup` one-shot init container that generates all the
 #      per-service .env files (backend, platform-service, prompt-service,
