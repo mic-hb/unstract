@@ -1,0 +1,33 @@
+http:
+  routers:
+    unstract-frontend-secure:
+      rule: Host(`{{ env "UNSTRACT_HOST" }}`) && !PathPrefix(`/api/v1`) && !PathPrefix(`/deployment`) && !PathPrefix(`/public`)
+      service: unstract-frontend
+      entryPoints:
+        - websecure
+      tls: {}
+    unstract-frontend-web:
+      rule: Host(`{{ env "UNSTRACT_HOST" }}`) && !PathPrefix(`/api/v1`) && !PathPrefix(`/deployment`) && !PathPrefix(`/public`)
+      service: unstract-frontend
+      entryPoints:
+        - web
+    unstract-backend-secure:
+      rule: Host(`{{ env "UNSTRACT_HOST" }}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/deployment`) || PathPrefix(`/public`))
+      service: unstract-backend
+      entryPoints:
+        - websecure
+      tls: {}
+    unstract-backend-web:
+      rule: Host(`{{ env "UNSTRACT_HOST" }}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/deployment`) || PathPrefix(`/public`))
+      service: unstract-backend
+      entryPoints:
+        - web
+  services:
+    unstract-frontend:
+      loadBalancer:
+        servers:
+          - url: http://unstract-frontend:80
+    unstract-backend:
+      loadBalancer:
+        servers:
+          - url: http://unstract-backend:8000

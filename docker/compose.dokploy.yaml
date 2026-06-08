@@ -24,10 +24,11 @@ include:
 #   2. Every service that has an env_file (or that depends on the
 #      proxy_overrides.yaml file existing) has `depends_on.unstract-setup:
 #      service_completed_successfully` so it waits for init to finish.
-#   3. Bundled Traefik is moved off port 80 (Dokploy owns 80) and off 8080
-#      (common Dokploy port) for its dashboard, the Traefik file provider
-#      is dropped (Docker labels do the routing), and the *.unstract.localhost
-#      host rules are replaced with the real UNSTRACT_HOST.
+#   3. Bundled Traefik (reverse-proxy) is moved off port 80 (Dokploy owns
+#      80) and onto port 8889 host-side, and its docker provider is
+#      disabled. Its internal routing comes from a file provider that
+#      reads docker/traefik-internal.yml, with *.unstract.localhost host
+#      rules replaced with the real UNSTRACT_HOST.
 #   4. Internal-only services have their host port mappings cleared (the
 #      bundled Traefik reaches them over the unstract-network by container
 #      name).
@@ -57,9 +58,57 @@ services:
     labels:
       - traefik.enable=false
 
+  # Replace *.unstract.localhost host rules with the real hostname.
+  #
+  # IMPORTANT: traefik.enable=false on the application containers.
+  # If we set traefik.enable=true, dokploy-traefik's docker provider
+  # auto-creates a router for unstract.ngelantour.cloud pointing
+  # directly at unstract-frontend:80 (using its unstract-network IP
+  # 172.23.0.27, which dokploy-traefik cannot reach from dokploy-network).
+  # That auto-router has a higher priority than anything we set in a
+  # file, so the request 504s. Disabling it here forces dokploy-traefik
+  # to use ONLY the router we define on the bundled Traefik below
+  # (which IS on dokploy-network and reachable).
   # ----------------------------------------------------------------------
-  # Bundled Traefik: move HTTP off port 80, dashboard off 8080, and drop
-  # the --providers.file.* args (Docker labels drive routing).
+  frontend:
+    depends_on:
+      unstract-setup:
+        condition: service_completed_successfully
+    ports: !override []
+    labels:
+      - traefik.enable=false
+  backend:
+    depends_on:
+      unstract-setup:
+        condition: service_completed_successfully
+    ports: !override []
+    labels:
+      - traefik.enable=false
+
+  # ----------------------------------------------------------------------
+  # Bundled Traefik (reverse-proxy). Routing config is split between
+  # two Traefik instances:
+  #
+  #   - Bundled Traefik: file provider ONLY (--providers.docker=false).
+  #     Reads docker/traefik-internal.yml. Routes to unstract-frontend:80
+  #     and unstract-backend:8000 (on unstract-network).
+  #
+  #   - dokploy-traefik: docker provider. Picks up the labels on this
+  #     container and creates public-facing HTTPS routers. The label
+  #     service "unstract-proxy" with no explicit port/URL causes
+  #     dokploy-traefik to auto-resolve to this container's IP on
+  #     dokploy-network (port 80, the first binding's container port)
+  #     - which IS reachable from dokploy-traefik.
+  #
+  # Why disable the bundled Traefik's docker provider? Both Traefik
+  # instances see the same labels on this container. With docker
+  # provider enabled on both, the bundled Traefik would also try to
+  # create a service called "unstract-proxy" - but no such container
+  # exists in its own docker view, so the resolution fails and the
+  # bundled Traefik's own routing breaks. Disabling the docker
+  # provider here makes the bundled Traefik's config source SOLELY
+  # the file provider (docker/traefik-internal.yml), which is the
+  # cleanest separation.
   # ----------------------------------------------------------------------
   reverse-proxy:
     depends_on:
@@ -69,48 +118,41 @@ services:
       - --api.insecure=true
       - --accesslog=true
       - --log.level=INFO
-      - --providers.docker=true
-      - --providers.docker.network=unstract-network
-      # Default Traefik is `exposedByDefault=true`, which means it tries
-      # to create a router for EVERY container on the host that has
-      # traefik.enable=true. On a Dokploy host, every other service
-      # (kashierku, dawnbase, ta-dev, etc.) has that label - they're
-      # meant for Dokploy's own Traefik, not Unstract's. Setting
-      # `exposedByDefault=false` makes Unstract's Traefik only consider
-      # services that explicitly opt-in via `traefik.enable=true` (the
-      # four Unstract services: backend, frontend, minio, feature-flag).
-      - --providers.docker.exposedByDefault=false
-    # !override replaces the upstream's 80/8080 host ports entirely
-    # (Compose would otherwise append to the list, leaving 80/8080 bound
-    # on the host and conflicting with Dokploy's own Traefik).
+      - --providers.docker=false
+      - --providers.file=true
+      - --providers.file.filename=/etc/traefik/internal.yml
+      - --providers.file.watch=true
     ports: !override
       - "${UNSTRACT_PUBLIC_PORT:-8888}:80"
       - "8081:8080"
     networks: !override
       - default
       - dokploy-network
-
-  # ----------------------------------------------------------------------
-  # Replace *.unstract.localhost host rules with the real hostname.
-  # ----------------------------------------------------------------------
-  frontend:
-    depends_on:
-      unstract-setup:
-        condition: service_completed_successfully
-    ports: !override []
+    volumes:
+      - ./traefik-internal.yml:/etc/traefik/internal.yml:ro
     labels:
       - traefik.enable=true
-      - traefik.http.routers.frontend.rule=Host(`${UNSTRACT_HOST}`) && !PathPrefix(`/api/v1`) && !PathPrefix(`/deployment`) && !PathPrefix(`/public`)
-      - traefik.http.services.frontend.loadbalancer.server.port=80
-  backend:
-    depends_on:
-      unstract-setup:
-        condition: service_completed_successfully
-    ports: !override []
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.backend.rule=Host(`${UNSTRACT_HOST}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/deployment`) || PathPrefix(`/public`))
-      - traefik.http.services.backend.loadbalancer.server.port=8000
+      # dokploy-traefik routers (visible to the public internet).
+      # Service is unstract-proxy with no explicit port/URL. The
+      # dokploy-traefik docker provider auto-resolves this to the
+      # reverse-proxy container's IP on dokploy-network, port 80
+      # (auto-discovered from the first binding "8889:80").
+      - traefik.http.routers.unstract-frontend-secure.rule=Host(`${UNSTRACT_HOST}`) && !PathPrefix(`/api/v1`) && !PathPrefix(`/deployment`) && !PathPrefix(`/public`)
+      - traefik.http.routers.unstract-frontend-secure.entrypoints=websecure
+      - traefik.http.routers.unstract-frontend-secure.tls=true
+      - traefik.http.routers.unstract-frontend-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.unstract-frontend-secure.service=unstract-proxy
+      - traefik.http.routers.unstract-frontend-web.rule=Host(`${UNSTRACT_HOST}`) && !PathPrefix(`/api/v1`) && !PathPrefix(`/deployment`) && !PathPrefix(`/public`)
+      - traefik.http.routers.unstract-frontend-web.entrypoints=web
+      - traefik.http.routers.unstract-frontend-web.service=unstract-proxy
+      - traefik.http.routers.unstract-backend-secure.rule=Host(`${UNSTRACT_HOST}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/deployment`) || PathPrefix(`/public`))
+      - traefik.http.routers.unstract-backend-secure.entrypoints=websecure
+      - traefik.http.routers.unstract-backend-secure.tls=true
+      - traefik.http.routers.unstract-backend-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.unstract-backend-secure.service=unstract-proxy
+      - traefik.http.routers.unstract-backend-web.rule=Host(`${UNSTRACT_HOST}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/deployment`) || PathPrefix(`/public`))
+      - traefik.http.routers.unstract-backend-web.entrypoints=web
+      - traefik.http.routers.unstract-backend-web.service=unstract-proxy
 
   # ----------------------------------------------------------------------
   # Remaining services. Each one has env_file directives that reference
