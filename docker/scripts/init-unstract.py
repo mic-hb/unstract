@@ -29,7 +29,7 @@ import shutil
 import sys
 from pathlib import Path
 
-REPO = Path("/unstract")
+REPO = Path(sys.argv[1] if len(sys.argv) > 1 else "/unstract")
 DOCKER = REPO / "docker"
 
 SERVICES_WITH_SAMPLE_ENV = [
