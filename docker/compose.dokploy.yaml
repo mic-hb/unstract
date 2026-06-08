@@ -263,6 +263,14 @@ services:
     ports: !override []
   feature-flag:
     ports: !override []
+  # unstructured-io is in the upstream 'optional' profile (only started
+  # with `docker compose --profile optional`). On Dokploy we pass no
+  # profile flag in the custom run command, so the container never
+  # comes up. Drop the profile here so the free local text extractor
+  # is available alongside the paid ones.
+  unstructured-io:
+    profiles: []
+    ports: !override []
 
 # ----------------------------------------------------------------------
 # Add `dokploy-network` as an externally-defined network. The bundled
