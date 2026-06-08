@@ -114,6 +114,12 @@ services:
     depends_on:
       unstract-setup:
         condition: service_completed_successfully
+    environment:
+      # Traefik's file provider evaluates {{ env "UNSTRACT_HOST" }} at
+      # load time. The Dokploy UI sets UNSTRACT_HOST for compose-time
+      # expansion, but Traefik has its own env namespace - we have to
+      # forward it explicitly.
+      - UNSTRACT_HOST=${UNSTRACT_HOST}
     command:
       - --api.insecure=true
       - --accesslog=true
