@@ -71,6 +71,15 @@ services:
       - --log.level=INFO
       - --providers.docker=true
       - --providers.docker.network=unstract-network
+      # Default Traefik is `exposedByDefault=true`, which means it tries
+      # to create a router for EVERY container on the host that has
+      # traefik.enable=true. On a Dokploy host, every other service
+      # (kashierku, dawnbase, ta-dev, etc.) has that label - they're
+      # meant for Dokploy's own Traefik, not Unstract's. Setting
+      # `exposedByDefault=false` makes Unstract's Traefik only consider
+      # services that explicitly opt-in via `traefik.enable=true` (the
+      # four Unstract services: backend, frontend, minio, feature-flag).
+      - --providers.docker.exposedByDefault=false
     # !override replaces the upstream's 80/8080 host ports entirely
     # (Compose would otherwise append to the list, leaving 80/8080 bound
     # on the host and conflicting with Dokploy's own Traefik).
