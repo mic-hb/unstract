@@ -1,0 +1,184 @@
+# Dokploy-specific override for Unstract
+#
+# Layered on top of docker-compose.yaml + docker-compose-dev-essentials.yaml
+# (the latter is pulled in by the former via the `include:` directive).
+#
+# What this file adds vs. upstream:
+#   1. An `unstract-setup` one-shot init container that generates all the
+#      per-service .env files (backend, platform-service, prompt-service,
+#      x2text-service, runner, workers) plus docker/essentials.env,
+#      docker/.env, and docker/proxy_overrides.yaml. Nothing sensitive ever
+#      needs to be committed to the fork.
+#   2. Every service that has an env_file (or that depends on the
+#      proxy_overrides.yaml file existing) has `depends_on.unstract-setup:
+#      service_completed_successfully` so it waits for init to finish.
+#   3. Bundled Traefik is moved off port 80 (Dokploy owns 80) and off 8080
+#      (common Dokploy port) for its dashboard, the Traefik file provider
+#      is dropped (Docker labels do the routing), and the *.unstract.localhost
+#      host rules are replaced with the real UNSTRACT_HOST.
+#   4. Internal-only services have their host port mappings cleared (the
+#      bundled Traefik reaches them over the unstract-network by container
+#      name).
+#
+# Required env (set in Dokploy UI):
+#   UNSTRACT_HOST             e.g. unstract.example.com
+#   UNSTRACT_PUBLIC_PORT      e.g. 8888
+#
+# Everything else is generated at deploy time by unstract-setup.
+
+services:
+  # ----------------------------------------------------------------------
+  # Init container. Runs once per `docker compose up`, generates the .env
+  # files on the host filesystem (via the bind mount), then exits. Existing
+  # .env files are preserved so ENCRYPTION_KEY persists across redeploys.
+  # ----------------------------------------------------------------------
+  unstract-setup:
+    image: python:3.12-alpine
+    container_name: unstract-setup
+    working_dir: /unstract
+    volumes:
+      - ..:/unstract
+    command: ["python", "/unstract/docker/scripts/init-unstract.py"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: "no"
+    labels:
+      - traefik.enable=false
+
+  # ----------------------------------------------------------------------
+  # Bundled Traefik: move HTTP off port 80, dashboard off 8080, and drop
+  # the --providers.file.* args (Docker labels drive routing).
+  # ----------------------------------------------------------------------
+  reverse-proxy:
+    depends_on:
+      unstract-setup:
+        condition: service_completed_successfully
+    command:
+      - --api.insecure=true
+      - --accesslog=true
+      - --log.level=INFO
+      - --providers.docker=true
+      - --providers.docker.network=unstract-network
+    # !override replaces the upstream's 80/8080 host ports entirely
+    # (Compose would otherwise append to the list, leaving 80/8080 bound
+    # on the host and conflicting with Dokploy's own Traefik).
+    ports: !override
+      - "${UNSTRACT_PUBLIC_PORT:-8888}:80"
+      - "8081:8080"
+
+  # ----------------------------------------------------------------------
+  # Replace *.unstract.localhost host rules with the real hostname.
+  # ----------------------------------------------------------------------
+  frontend:
+    depends_on:
+      unstract-setup:
+        condition: service_completed_successfully
+    ports: !override []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frontend.rule=Host(`${UNSTRACT_HOST}`) && !PathPrefix(`/api/v1`) && !PathPrefix(`/deployment`) && !PathPrefix(`/public`)
+      - traefik.http.services.frontend.loadbalancer.server.port=80
+  backend:
+    depends_on:
+      unstract-setup:
+        condition: service_completed_successfully
+    ports: !override []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.backend.rule=Host(`${UNSTRACT_HOST}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/deployment`) || PathPrefix(`/public`))
+      - traefik.http.services.backend.loadbalancer.server.port=8000
+
+  # ----------------------------------------------------------------------
+  # Remaining services. Each one has env_file directives that reference
+  # .env files produced by unstract-setup.
+  # ----------------------------------------------------------------------
+  worker-metrics:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+  worker-ide-callback:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+  celery-flower:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  celery-beat:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+  platform-service:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  prompt-service:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  x2text-service:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  runner:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-api-deployment-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-callback-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-file-processing-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-general-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-notification-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-log-consumer-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-log-history-scheduler-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-scheduler-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  worker-executor-v2:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+
+  # ----------------------------------------------------------------------
+  # Essentials (from docker-compose-dev-essentials.yaml) - they all
+  # depend on docker/essentials.env and the unstract-network.
+  # ----------------------------------------------------------------------
+  db:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  minio:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  qdrant:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  rabbitmq:
+    depends_on:
+      unstract-setup: { condition: service_completed_successfully }
+    ports: !override []
+  redis:
+    ports: !override []
+  feature-flag:
+    ports: !override []

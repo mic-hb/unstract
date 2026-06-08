@@ -658,6 +658,7 @@ docker/compose.*.yaml
 # broader ``compose.*.yaml`` ignore so a delete + recreate doesn't make it
 # look untracked, and so teammates can spot it.
 !docker/compose.debug.yaml
+!docker/compose.dokploy.yaml
 docker/workflow_data/
 
 # Tool development
